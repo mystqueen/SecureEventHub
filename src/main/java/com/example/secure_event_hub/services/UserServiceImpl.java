@@ -21,16 +21,22 @@ import java.util.logging.Logger;
 @Service
 public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
+    private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
+    private final OtpService otpService;
+    private final RedisTemplate<String, String> redisTemplate;
     Logger logger = Logger.getLogger(UserServiceImpl.class.getName());
 
     String intro = "User with email ";
 
-    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder, ObjectMapper objectMapper) {
+    public UserServiceImpl(UserRepository userRepository, EmailService emailService, PasswordEncoder passwordEncoder, ObjectMapper objectMapper, OtpService otpService, RedisTemplate<String, String> redisTemplate) {
         this.userRepository = userRepository;
+        this.emailService = emailService;
         this.passwordEncoder = passwordEncoder;
         this.objectMapper = objectMapper;
+        this.otpService = otpService;
+        this.redisTemplate = redisTemplate;
     }
 
     private Optional<User> getUser(String email) {
@@ -53,7 +59,43 @@ public class UserServiceImpl implements UserService {
         user.setUpdateAt(LocalDateTime.now());
         user.setStatus(Status.FRESH);
         user.setRole(Role.USER);
+        String userOtp = otpService.generateOtp(user.getEmail());
+        emailService.sendOtpEmail(user.getEmail(), userOtp);
         return objectMapper.convertValue(userRepository.save(user), UserDto.class);
+    }
+
+    @Override
+    public Boolean verifyUser(String email, String otp) {
+        InputValidations.validateEmail(email);
+
+        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(intro + email + "does not exist"));
+
+        if(user.getStatus() == Status.VERIFIED){
+            throw new UserAlreadyExistException("User is already verified!");
+        }
+
+        String storedOtp = redisTemplate.opsForValue().get(email);
+        if(storedOtp == null || !storedOtp.equals(otp)){
+            throw new EntityNotFoundException("Invalid OTP");
+        }
+        otpService.verifyOtp(email, otp);
+        user.setStatus(Status.VERIFIED);
+        userRepository.save(user);
+        redisTemplate.delete(email);
+        return true;
+    }
+
+    public String resendOtp(String email) {
+        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(intro + email + "does not exist"));
+        if (user.getStatus() == Status.VERIFIED) {
+            throw new UserAlreadyExistException("User is already verified");
+        }
+        String storedOtp = redisTemplate.opsForValue().get(email);
+        if (storedOtp != null) {
+            return "Current OTP is still valid";
+        }
+        otpService.generateOtp(email);
+        return "New OTP sent";
     }
 
 }
