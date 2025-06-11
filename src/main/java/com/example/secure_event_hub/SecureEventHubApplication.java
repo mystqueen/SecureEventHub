@@ -1,4 +1,4 @@
-package com.example.SecureEventHub;
+package com.example.secure_event_hub;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
