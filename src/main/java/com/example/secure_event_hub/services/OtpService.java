@@ -28,13 +28,11 @@ public class OtpService {
         return newOtp;
     }
 
-    public Boolean verifyOtp(String email, String otp) {
+    public void verifyOtp(String email, String otp) {
         String storedOtp = redisTemplate.opsForValue().get(email);
         if (storedOtp != null && storedOtp.equals(otp)) {
             redisTemplate.delete(email);
-            return true;
         }
-        return false;
     }
 
     private String generateRandomOtp() {

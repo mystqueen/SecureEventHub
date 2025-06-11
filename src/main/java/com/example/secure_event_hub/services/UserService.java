@@ -11,4 +11,7 @@ public interface UserService {
     UserDto registerUser(User user);
     Boolean verifyUser(String email, String otp);
     String resendOtp(String email);
+    void verifyOtp(String email, String otp);
+    String requestPasswordReset(String email);
+    String resetPassword(String email, String password);
 }

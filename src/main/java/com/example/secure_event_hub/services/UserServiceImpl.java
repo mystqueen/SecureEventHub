@@ -28,7 +28,8 @@ public class UserServiceImpl implements UserService {
     private final RedisTemplate<String, String> redisTemplate;
     Logger logger = Logger.getLogger(UserServiceImpl.class.getName());
 
-    String intro = "User with email ";
+    private static final String OTP_EXPIRY = "\n It expires in 10 minutes.";
+    private static final String USER_NOT_FOUND = "User not found";
 
     public UserServiceImpl(UserRepository userRepository, EmailService emailService, PasswordEncoder passwordEncoder, ObjectMapper objectMapper, OtpService otpService, RedisTemplate<String, String> redisTemplate) {
         this.userRepository = userRepository;
@@ -51,7 +52,7 @@ public class UserServiceImpl implements UserService {
         Optional<User> userExists = userRepository.findByUserName(user.getUserName());
         if (getUser(user.getEmail()).isPresent() || userExists.isPresent()) {
             logger.info("User already exists");
-            throw new UserAlreadyExistException(intro + user.getEmail() + "or user with username " + user.getUserName() + " already exists");
+            throw new UserAlreadyExistException("User with email " + user.getEmail() + "or user with username " + user.getUserName() + " already exists");
         }
 
         user.setPassword(passwordEncoder.encode(user.getPassword()));
@@ -60,42 +61,63 @@ public class UserServiceImpl implements UserService {
         user.setStatus(Status.FRESH);
         user.setRole(Role.USER);
         String userOtp = otpService.generateOtp(user.getEmail());
-        emailService.sendOtpEmail(user.getEmail(), userOtp);
+        String message = "Your OTP for email verification is: " + userOtp + OTP_EXPIRY;
+        emailService.sendEmail(user.getEmail(), "Email Verification.", message);
         return objectMapper.convertValue(userRepository.save(user), UserDto.class);
     }
 
     @Override
     public Boolean verifyUser(String email, String otp) {
-        InputValidations.validateEmail(email);
+        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(USER_NOT_FOUND));
 
-        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(intro + email + "does not exist"));
-
-        if(user.getStatus() == Status.VERIFIED){
+        if (user.getStatus() == Status.VERIFIED) {
             throw new UserAlreadyExistException("User is already verified!");
         }
 
-        String storedOtp = redisTemplate.opsForValue().get(email);
-        if(storedOtp == null || !storedOtp.equals(otp)){
-            throw new EntityNotFoundException("Invalid OTP");
-        }
-        otpService.verifyOtp(email, otp);
+        verifyOtp(email, otp);
         user.setStatus(Status.VERIFIED);
         userRepository.save(user);
-        redisTemplate.delete(email);
         return true;
     }
 
-    public String resendOtp(String email) {
-        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(intro + email + "does not exist"));
-        if (user.getStatus() == Status.VERIFIED) {
-            throw new UserAlreadyExistException("User is already verified");
+    @Override
+    public void verifyOtp(String email, String otp) {
+        String storedOtp = redisTemplate.opsForValue().get(email);
+        if (storedOtp == null || !storedOtp.equals(otp)) {
+            throw new EntityNotFoundException("Invalid OTP");
         }
+        otpService.verifyOtp(email, otp);
+    }
+
+    @Override
+    public String resendOtp(String email) {
+        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(USER_NOT_FOUND));
         String storedOtp = redisTemplate.opsForValue().get(email);
         if (storedOtp != null) {
             return "Current OTP is still valid";
         }
-        otpService.generateOtp(email);
+        String otp = otpService.generateOtp(email);
+        String message = "Your new requested OTP is: " + otp + OTP_EXPIRY;
+        emailService.sendEmail(user.getEmail(), "New Otp Request", message);
         return "New OTP sent";
+    }
+
+    @Override
+    public String requestPasswordReset(String email) {
+        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(USER_NOT_FOUND));
+        String otp = otpService.generateOtp(user.getEmail());
+        String message = "Your password reset OTP is: " + otp + OTP_EXPIRY;
+        emailService.sendEmail(user.getEmail(), "Password Reset", message);
+        return "Password Reset OTP sent";
+    }
+
+    @Override
+    public String resetPassword(String email, String password) {
+        User user = userRepository.findByEmail(email).orElseThrow(() -> new UserNotFoundException(USER_NOT_FOUND));
+        user.setPassword(passwordEncoder.encode(password));
+        user.setUpdateAt(LocalDateTime.now());
+        userRepository.save(user);
+        return "Password reset successful";
     }
 
 }
